@@ -259,7 +259,7 @@ select.sm2{min-height:36px;background:var(--panel2);color:var(--text);border:1px
   <div class="infoSection">
     <h3>출처</h3>
     <div id="sourceText">-</div>
-    <div id="appVersion">버전: 20261024-073805-44562797-dummy1</div>
+    <div id="appVersion">버전: 20261024-073831-44562797-dummy2</div>
   </div>
 </div>
 
@@ -1176,7 +1176,7 @@ function collectBackup(){
 }
 document.getElementById('btnExportMemo').addEventListener('click', function(){
   var b = collectBackup();
-  var payload = {app:'trade-replay', format:1, exported:new Date().toISOString(), build:'20261024-073805-44562797-dummy1', items:b.items};
+  var payload = {app:'trade-replay', format:1, exported:new Date().toISOString(), build:'20261024-073831-44562797-dummy2', items:b.items};
   var blob = new Blob([JSON.stringify(payload, null, 1)], {type:'application/json'});
   var d = new Date(), pad = function(n){ return (n<10?'0':'')+n; };
   var name = 'trade_replay_memo_' + d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.json';
