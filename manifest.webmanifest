@@ -1,0 +1,18 @@
+{
+  "name": "거래 복기 차트",
+  "short_name": "거래 복기",
+  "description": "트레이더 거래 복기용 차트 (진입일 이전 봉만 보고 연습)",
+  "lang": "ko",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#131722",
+  "theme_color": "#131722",
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}
