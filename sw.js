@@ -1,5 +1,5 @@
 /* 거래 복기 차트 - 서비스 워커 (빌드마다 BUILD 값이 바뀌어 새 버전으로 인식됨) */
-const BUILD = '20261024-073949-44562797';
+const BUILD = '20261028-003244-5d046bc5';
 const CACHE = 'trade-replay-' + BUILD;
 const ASSETS = ['index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-512-maskable.png'];
 
