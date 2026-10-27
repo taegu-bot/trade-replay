@@ -68,6 +68,10 @@ header#topbar{display:flex;align-items:center;justify-content:space-between;gap:
 .maChip[data-ma="50"].active{background:#ab47bc;color:#fff;}
 .maChip[data-ma="200"].active{background:#ff7043;}
 .ctrlRow2 .spacer{flex:1 1 auto;}
+.modeBtn{flex:0 0 auto;min-width:56px;min-height:36px;padding:0 10px;border-radius:8px;
+  border:1px solid var(--accent);background:rgba(41,98,255,0.18);color:#fff;font-size:12px;font-weight:700;}
+.modeBtn:active{filter:brightness(1.3);}
+.modeGroup{display:inline-flex;gap:6px;flex:0 0 auto;}
 .ctrlRow2 button.sm{flex:0 0 auto;min-height:36px;padding:0 10px;border-radius:8px;
   border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:12px;}
 select.sm2{min-height:36px;background:var(--panel2);color:var(--text);border:1px solid var(--border);
@@ -182,6 +186,7 @@ select.sm2{min-height:36px;background:var(--panel2);color:var(--text);border:1px
       <button class="maChip" data-ma="20" type="button">MA20</button>
       <button class="maChip" data-ma="50" type="button">MA50</button>
       <button class="maChip" data-ma="200" type="button">MA200</button>
+      <span class="modeGroup"><button id="btnTimeframe" class="modeBtn" type="button" title="일봉/주봉 전환">일봉</button><button id="btnChartType" class="modeBtn" type="button" title="캔들/바(시고저종) 전환">캔들</button></span>
       <span class="spacer"></span>
       <button id="btnRewind" class="sm" type="button">되감기</button>
       <button id="btnRandom" class="sm" type="button">랜덤</button>
@@ -238,6 +243,11 @@ select.sm2{min-height:36px;background:var(--panel2);color:var(--text);border:1px
         <option value="EMA">EMA</option>
       </select>
     </div>
+    <div class="settingsRow" id="tfNote" style="font-size:12px;color:var(--muted);line-height:1.5">
+      차트 아래 '일봉/주봉' 버튼과 '캔들/바' 버튼으로 바꿀 수 있어요(모든 묶음에 공통 적용).
+      주봉은 월요일 시작 주 기준으로, 지금까지 보이는 일봉만 모아 만들어요(진입일이 속한 주는 진입 전날까지의 부분 주봉).
+      주봉 이동평균은 주봉 종가 기준이며 MA10·MA20·MA50·MA200 버튼이 각각 10주·20주·30주·40주선이 됩니다.
+    </div>
   </div>
   <div class="infoSection">
     <h3>메모 백업</h3>
@@ -259,7 +269,7 @@ select.sm2{min-height:36px;background:var(--panel2);color:var(--text);border:1px
   <div class="infoSection">
     <h3>출처</h3>
     <div id="sourceText">-</div>
-    <div id="appVersion">버전: 20261028-012939-c001867c</div>
+    <div id="appVersion">버전: 20261028-014508-7dc9fb31</div>
   </div>
 </div>
 
@@ -366,17 +376,22 @@ function loadGuess(id){ try{ return localStorage.getItem(K('guess.'+id)) || ''; 
 function saveGuess(id, val){ try{ localStorage.setItem(K('guess.'+id), val); }catch(e){} }
 
 // ---------- settings ----------
-var DEFAULT_SETTINGS = {previewEntrySL:false, showListResult:false, maType:'SMA', ma:{10:true,20:true,50:true,200:false}};
+var DEFAULT_SETTINGS = {previewEntrySL:false, showListResult:false, maType:'SMA', ma:{10:true,20:true,50:true,200:false}, chartType:'candle', timeframe:'D'};
 var settings = (function(){
   var s = lsGetJSON('kkreplay.settings', {});
   var merged = Object.assign({}, DEFAULT_SETTINGS, s);
   merged.ma = Object.assign({}, DEFAULT_SETTINGS.ma, s.ma||{});
+  if(merged.chartType !== 'bar') merged.chartType = 'candle';
+  if(merged.timeframe !== 'W') merged.timeframe = 'D';
   return merged;
 })();
 function saveSettings(){ lsSetJSON('kkreplay.settings', settings); }
 
 var MA_PERIODS = [10,20,50,200];
 var MA_COLORS = {10:'#f6c343', 20:'#4fc3f7', 50:'#ab47bc', 200:'#ff7043'};
+// 주봉 모드 이동평균: 버튼(일봉 기간) -> 주봉 종가 기준 기간
+var WEEK_MA = {10:10, 20:20, 50:30, 200:40};
+function maPeriod(p){ return settings.timeframe === 'W' ? WEEK_MA[p] : p; }
 
 // ---------- toast ----------
 var toastEl = document.getElementById('toast');
@@ -399,10 +414,23 @@ var chart = LightweightCharts.createChart(chartContainer, {
   crosshair:{mode: LightweightCharts.CrosshairMode.Normal},
   autoSize:true,
 });
-var candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
-  upColor:'#26a69a', downColor:'#ef5350', borderVisible:false,
-  wickUpColor:'#26a69a', wickDownColor:'#ef5350'
-});
+// 가격 시리즈: 캔들 또는 바(OHLC). 전환 시 기존 시리즈를 제거하고 새로 만든다(맨 아래 순서 유지).
+var priceSeriesLive = 0;
+function makePriceSeries(type){
+  var sr;
+  if(type === 'bar'){
+    sr = chart.addSeries(LightweightCharts.BarSeries, {upColor:'#26a69a', downColor:'#ef5350', openVisible:true, thinBars:false});
+  } else {
+    sr = chart.addSeries(LightweightCharts.CandlestickSeries, {
+      upColor:'#26a69a', downColor:'#ef5350', borderVisible:false,
+      wickUpColor:'#26a69a', wickDownColor:'#ef5350'
+    });
+  }
+  try{ sr.setSeriesOrder(0); }catch(e){}
+  priceSeriesLive++;
+  return sr;
+}
+var candleSeries = makePriceSeries(settings.chartType);
 var volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
   priceFormat:{type:'volume'}, priceScaleId:'vol', lastValueVisible:false, priceLineVisible:false
 });
@@ -503,7 +531,7 @@ autoBtnEl.addEventListener('pointerdown', function(e){ e.stopPropagation(); }, t
 var state = {
   tradeId:null, trade:null, adjBars:[], entryIdx:-1, exitIdx:-1,
   cutoff:0, revealed:false, filtered:[], entryLine:null, stopLine:null,
-  lastCandleData:[], lastVolData:[]
+  lastCandleData:[], lastVolData:[], lastWeekKeys:[]
 };
 var barsCache = {};
 
@@ -551,9 +579,20 @@ function computeMA(bars, period, type){
   return out;
 }
 
+// 공개된 일봉([d,o,h,l,c,v])만 받아 월요일 시작 주봉으로 묶는다. 주봉 time = 그 주 첫 거래일.
+function aggregateWeekly(days){
+  var out = [], cur = null, ck = null;
+  for(var i=0;i<days.length;i++){
+    var b = days[i], k = weekKey(b[0]);
+    if(k !== ck){ cur = [b[0], b[1], b[2], b[3], b[4], b[5]]; out.push(cur); ck = k; }
+    else { if(b[2] > cur[2]) cur[2] = b[2]; if(b[3] < cur[3]) cur[3] = b[3]; cur[4] = b[4]; cur[5] += b[5]; }
+  }
+  return out;
+}
+
 function fitVisibleRange(n){
   if(n <= 0) return;
-  var from = Math.max(0, n-120);
+  var from = Math.max(0, n-(settings.timeframe === 'W' ? 80 : 120));
   var to = n-1+4;
   try{ chart.timeScale().setVisibleLogicalRange({from:from, to:to}); }catch(e){}
 }
@@ -563,6 +602,14 @@ function clearPriceLines(){
   if(state.stopLine){ try{ candleSeries.removePriceLine(state.stopLine); }catch(e){} state.stopLine=null; }
 }
 
+// 일봉 인덱스(일수) -> 현재 차트 봉의 time (주봉이면 그 주 봉의 time)
+function weekKey(d){ return Math.floor((d + 3) / 7); }   // 월요일 시작 (1970-01-01 = 목요일)
+function barTime(d){
+  if(settings.timeframe !== 'W') return indexToDate(d);
+  var wk = weekKey(d), data = state.lastCandleData;
+  for(var i=data.length-1;i>=0;i--){ if(state.lastWeekKeys[i] === wk) return data[i].time; }
+  return null;
+}
 function updateMarkersAndLines(){
   var arr = [];
   var t = state.trade;
@@ -571,18 +618,18 @@ function updateMarkersAndLines(){
     var entryBar = state.adjBars[state.entryIdx];
     if(entryBar){
       if(t.side === 'Short'){
-        arr.push({time: indexToDate(entryBar[0]), position:'aboveBar', color:'#ef5350', shape:'arrowDown', text:'공매도' + (typeof t.ep==='number' ? ' $'+fmtPrice(t.ep) : '')});
+        arr.push({time: barTime(entryBar[0]), position:'aboveBar', color:'#ef5350', shape:'arrowDown', text:'공매도' + (typeof t.ep==='number' ? ' $'+fmtPrice(t.ep) : '')});
       } else {
-        arr.push({time: indexToDate(entryBar[0]), position:'belowBar', color:'#26a69a', shape:'arrowUp', text:'매수' + (typeof t.ep==='number' ? ' $'+fmtPrice(t.ep) : '')});
+        arr.push({time: barTime(entryBar[0]), position:'belowBar', color:'#26a69a', shape:'arrowUp', text:'매수' + (typeof t.ep==='number' ? ' $'+fmtPrice(t.ep) : '')});
       }
     }
     if(state.exitIdx !== -1 && state.exitIdx < state.cutoff){
       var exitBar = state.adjBars[state.exitIdx];
       if(exitBar){
         if(t.side === 'Short'){
-          arr.push({time: indexToDate(exitBar[0]), position:'belowBar', color:'#ffb74d', shape:'arrowUp', text:'청산 $'+fmtPrice(t.xp)});
+          arr.push({time: barTime(exitBar[0]), position:'belowBar', color:'#ffb74d', shape:'arrowUp', text:'청산 $'+fmtPrice(t.xp)});
         } else {
-          arr.push({time: indexToDate(exitBar[0]), position:'aboveBar', color:'#ffb74d', shape:'arrowDown', text:'매도 $'+fmtPrice(t.xp)});
+          arr.push({time: barTime(exitBar[0]), position:'aboveBar', color:'#ffb74d', shape:'arrowDown', text:'매도 $'+fmtPrice(t.xp)});
         }
       }
     }
@@ -591,6 +638,7 @@ function updateMarkersAndLines(){
       state.stopLine = candleSeries.createPriceLine({price:t.sl, color:'#ef5350', lineWidth:1, lineStyle:LightweightCharts.LineStyle.Dashed, title:'손절'});
     }
   }
+  arr = arr.filter(function(m){ return m.time != null; });
   try{ markersApi.setMarkers(arr); }catch(e){}
 }
 
@@ -601,7 +649,7 @@ function setLegendText(bar, vol, prev){
   else change = (bar.close - bar.open) / bar.open * 100;
   var sign = change >= 0 ? '+' : '';
   var color = change >= 0 ? '#26a69a' : '#ef5350';
-  legendEl.innerHTML = bar.time + '&nbsp;&nbsp;O ' + fmtPrice(bar.open) + ' H ' + fmtPrice(bar.high) +
+  legendEl.innerHTML = (settings.timeframe === 'W' ? '주봉 ' : '') + bar.time + '&nbsp;&nbsp;O ' + fmtPrice(bar.open) + ' H ' + fmtPrice(bar.high) +
     ' L ' + fmtPrice(bar.low) + ' C ' + fmtPrice(bar.close) + '&nbsp;&nbsp;V ' + fmtVol(vol) +
     '&nbsp;&nbsp;<span style="color:'+color+'">' + sign + change.toFixed(2) + '%</span>';
 }
@@ -633,7 +681,9 @@ function renderChart(keepView){
     try{ savedLR = ts.getVisibleLogicalRange(); }catch(e){}
     try{ savedPR = priceScaleApi.getVisibleRange(); }catch(e){}
   }
-  var visible = state.adjBars.slice(0, state.cutoff);
+  var visible = state.adjBars.slice(0, state.cutoff);   // 누수 방지: 공개된 일봉까지만
+  state.lastWeekKeys = [];
+  if(settings.timeframe === 'W'){ visible = aggregateWeekly(visible); state.lastWeekKeys = visible.map(function(b){ return weekKey(b[0]); }); }
   var candleData = visible.map(function(b){
     return {time: indexToDate(b[0]), open:b[1], high:b[2], low:b[3], close:b[4]};
   });
@@ -643,7 +693,7 @@ function renderChart(keepView){
   candleSeries.setData(candleData);
   volumeSeries.setData(volData);
   MA_PERIODS.forEach(function(p){
-    maSeries[p].setData(computeMA(visible, p, settings.maType));
+    maSeries[p].setData(computeMA(visible, maPeriod(p), settings.maType));
   });
   state.lastCandleData = candleData;
   state.lastVolData = volData;
@@ -1059,9 +1109,91 @@ document.getElementById('btnCloseInfo').addEventListener('click', closeInfo);
   }, {passive:true});
 })();
 
+// ---------- 캔들/바, 일봉/주봉 전환 (전역 설정, localStorage) ----------
+var btnChartTypeEl = document.getElementById('btnChartType');
+var btnTimeframeEl = document.getElementById('btnTimeframe');
+function updateModeButtons(){
+  btnChartTypeEl.textContent = settings.chartType === 'bar' ? '바' : '캔들';
+  btnChartTypeEl.title = settings.chartType === 'bar' ? '지금 바(시고저종) - 눌러서 캔들로' : '지금 캔들 - 눌러서 바(시고저종)로';
+  btnTimeframeEl.textContent = settings.timeframe === 'W' ? '주봉' : '일봉';
+  btnTimeframeEl.title = settings.timeframe === 'W' ? '지금 주봉 - 눌러서 일봉으로' : '지금 일봉 - 눌러서 주봉으로';
+  document.querySelectorAll('.maChip').forEach(function(chip){
+    var p = Number(chip.getAttribute('data-ma'));
+    chip.textContent = settings.timeframe === 'W' ? ('MA' + WEEK_MA[p] + '주') : ('MA' + p);
+  });
+}
+function setChartType(type){
+  type = type === 'bar' ? 'bar' : 'candle';
+  if(type === settings.chartType && candleSeries){ updateModeButtons(); return; }
+  var ts = chart.timeScale(), lr = null, pr = null, auto = isPriceAuto();
+  try{ lr = ts.getVisibleLogicalRange(); }catch(e){}
+  try{ pr = priceScaleApi.getVisibleRange(); }catch(e){}
+  clearPriceLines();
+  try{ markersApi.detach(); }catch(e){}
+  try{ chart.removeSeries(candleSeries); priceSeriesLive--; }catch(e){}
+  settings.chartType = type; saveSettings();
+  candleSeries = makePriceSeries(type);
+  markersApi = LightweightCharts.createSeriesMarkers(candleSeries, []);
+  candleSeries.setData(state.lastCandleData || []);
+  updateMarkersAndLines();
+  if(lr){ try{ ts.setVisibleLogicalRange({from:lr.from, to:lr.to}); }catch(e){} }
+  if(auto) priceScaleApi.applyOptions({autoScale:true});
+  else if(pr){ try{ priceScaleApi.setVisibleRange({from:pr.from, to:pr.to}); }catch(e){} }
+  updateAutoBtn(); updateModeButtons(); updateLegendDefault();
+}
+// 일봉<->주봉: 자동 상태면 새 모드에 맞춰 자동 맞춤, 수동 상태면 같은 기간(날짜)과 가격 범위를 유지
+function setTimeframe(tf){
+  tf = tf === 'W' ? 'W' : 'D';
+  if(tf === settings.timeframe){ updateModeButtons(); return; }
+  var manual = isViewManual(), ts = chart.timeScale(), lr = null, pr = null;
+  var oldData = state.lastCandleData || [];
+  try{ lr = ts.getVisibleLogicalRange(); }catch(e){}
+  try{ pr = priceScaleApi.getVisibleRange(); }catch(e){}
+  function dayAt(li){  // 논리 인덱스 -> 일수(봉 밖이면 끝 봉 기준)
+    var n = oldData.length; if(!n) return null;
+    var i = Math.max(0, Math.min(n-1, Math.round(li)));
+    return dateToIndex(oldData[i].time);
+  }
+  var dFrom = lr ? dayAt(lr.from) : null, dTo = lr ? dayAt(lr.to) : null;
+  var nOld = oldData.length, overR = lr ? Math.max(0, lr.to - (nOld-1)) : 0, overL = lr ? Math.max(0, -lr.from) : 0;
+  settings.timeframe = tf; saveSettings();
+  updateModeButtons();
+  if(!state.trade){ return; }
+  if(!manual || dFrom == null){ setPriceAuto(); renderChart(false); return; }
+  renderChart(true);   // 봉 다시 계산(가격축 수동 범위 유지)
+  var nd = state.lastCandleData, keys = nd.map(function(b){ return dateToIndex(b.time); });
+  function idxFor(day){  // day 이상인 첫 봉(일봉) / day가 속한 주(주봉)
+    if(tf === 'W'){ var wk = weekKey(day); for(var i=0;i<keys.length;i++){ if(weekKey(keys[i]) >= wk) return i; } return keys.length-1; }
+    for(var j=0;j<keys.length;j++){ if(keys[j] >= day) return j; } return keys.length-1;
+  }
+  var ratio = tf === 'W' ? 0.2 : 5;   // 봉 밖 여백(봉 개수)을 새 단위로
+  var from = idxFor(dFrom) - overL*ratio, to = idxFor(dTo) + overR*ratio;
+  if(to - from < 5) to = from + 5;
+  try{ ts.setVisibleLogicalRange({from:from, to:to}); }catch(e){}
+  if(pr){ try{ priceScaleApi.setVisibleRange({from:pr.from, to:pr.to}); }catch(e){} }
+  updateAutoBtn();
+}
+btnChartTypeEl.addEventListener('click', function(){
+  setChartType(settings.chartType === 'bar' ? 'candle' : 'bar');
+  toast(settings.chartType === 'bar' ? '바 차트(시고저종)' : '캔들 차트');
+});
+btnTimeframeEl.addEventListener('click', function(){
+  setTimeframe(settings.timeframe === 'W' ? 'D' : 'W');
+  toast(settings.timeframe === 'W' ? '주봉 (MA 10·20·30·40주)' : '일봉');
+});
+updateModeButtons();
+
 // ---------- debug API ----------
 window.__debug = {
   getVisibleBars: function(){ return candleSeries.data(); },
+  getMode: function(){ return {chartType: settings.chartType, timeframe: settings.timeframe, seriesType: candleSeries.seriesType(), live: priceSeriesLive, tf: btnTimeframeEl.textContent, ct: btnChartTypeEl.textContent}; },
+  setChartType: function(t){ setChartType(t); },
+  setTimeframe: function(t){ setTimeframe(t); },
+  getDaysShown: function(){ return state.adjBars.slice(0, state.cutoff); },
+  getEntryDay: function(){ return state.adjBars[state.entryIdx] ? state.adjBars[state.entryIdx][0] : null; },
+  getMA: function(p){ return maSeries[p].data(); },
+  getMarkers: function(){ try{ return markersApi.markers(); }catch(e){ return null; } },
+  getPriceLines: function(){ return {entry: !!state.entryLine, stop: !!state.stopLine}; },
   getSeriesInfo: function(){
     var all = {candle: candleSeries.data(), volume: volumeSeries.data()};
     MA_PERIODS.forEach(function(p){ all['ma'+p] = maSeries[p].data(); });
@@ -1209,7 +1341,7 @@ function collectBackup(){
 }
 document.getElementById('btnExportMemo').addEventListener('click', function(){
   var b = collectBackup();
-  var payload = {app:'trade-replay', format:1, exported:new Date().toISOString(), build:'20261028-012939-c001867c', items:b.items};
+  var payload = {app:'trade-replay', format:1, exported:new Date().toISOString(), build:'20261028-014508-7dc9fb31', items:b.items};
   var blob = new Blob([JSON.stringify(payload, null, 1)], {type:'application/json'});
   var d = new Date(), pad = function(n){ return (n<10?'0':'')+n; };
   var name = 'trade_replay_memo_' + d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.json';
